@@ -1,0 +1,2 @@
+subdir:
+	$(MAKE) -C ./build
