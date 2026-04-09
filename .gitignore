@@ -1,0 +1,7 @@
+Makefile
+CMakeFiles
+CMakeCache.txt
+.DS_Store
+external/.DS_Store
+external/include/SDL3/
+build/
