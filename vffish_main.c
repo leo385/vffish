@@ -1,6 +1,7 @@
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_events.h>
+#include <vulkan/vulkan.h>
 #include <stdio.h>
 
 int main(void) {
@@ -19,6 +20,11 @@ int main(void) {
                 break;
             }
         }
+		
+		// Vulkan code
+		uint32_t extensionCount = 0;
+		vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, NULL);
+		printf("%d extensions have been found of vulkan\n", extensionCount);
     }
 
     SDL_DestroyWindow(window);
