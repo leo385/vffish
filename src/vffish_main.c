@@ -6,6 +6,8 @@
 #include <vma/vk_mem_alloc.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
 
 typedef struct Application {
 		VkInstance instance;
@@ -28,7 +30,7 @@ bool check(VkResult result) {
 	return 0;
 }
 
-int main(void) {
+int main(int argv, char** argc) {
 
     if(!SDL_Init(SDL_INIT_VIDEO)) {
         return 1;
@@ -99,7 +101,7 @@ int main(void) {
 		
 		VkResult result;
 		if(app) {
-				check(result = vkCreateInstance(&createInfo, NULL, &app->instance));
+			check(result = vkCreateInstance(&createInfo, NULL, &app->instance));
 		}
 		
 		/* extensionProperties are no more needed due to instance was already created */
@@ -107,7 +109,51 @@ int main(void) {
 		free(extensionNames);
 		if(app && result == VK_SUCCESS) volkLoadInstance(app->instance);
 
+		/* Count devices needed for rendering */
+		uint32_t currentDevicesCount = 0;
+		VkPhysicalDevice* physicalDevices = NULL;
 		
+		if(app) {
+			check(result = vkEnumeratePhysicalDevices(app->instance, &currentDevicesCount, NULL));
+			
+			if(currentDevicesCount == 0) {
+				printf("There are not available devices for rendering");
+				return 1;
+			}
+			
+			printf("Available devices: %d\n", currentDevicesCount);
+			physicalDevices = malloc(currentDevicesCount * sizeof(VkPhysicalDevice));
+			check(result = vkEnumeratePhysicalDevices(app->instance, &currentDevicesCount, physicalDevices));
+		}
+		
+		/* Provide device index to the console */
+		uint32_t deviceIndex = { 0 };
+		if(argv > 1) {
+			const char* cDeviceIndex = argc[1];
+			char *endptr;
+			
+			errno = 0;
+			unsigned long index = strtoul(cDeviceIndex, &endptr, 10);
+			if((uint32_t)index >= currentDevicesCount) {
+				printf("This device index doesn't exist\n");
+				return 1;
+			}
+			
+			if(errno == ERANGE || (uint32_t)index > UINT_MAX) {
+				perror("This index is too big\n");
+				return 1;
+			}
+			
+			deviceIndex = (uint32_t)index;
+		}
+		
+		/* Display device information with choosen index */
+		if(physicalDevices) {
+			VkPhysicalDeviceProperties2 deviceProperties = { 0 };
+			deviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+			vkGetPhysicalDeviceProperties2(physicalDevices[deviceIndex], &deviceProperties);
+			printf("Selected device: %s\n", deviceProperties.properties.deviceName);
+		}
 	
     }
 
