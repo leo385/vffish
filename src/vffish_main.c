@@ -35,6 +35,8 @@ int main(void) {
     }
 
     SDL_Window *window = SDL_CreateWindow("vffish", 600u, 400u, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+	Application *app = malloc(sizeof(Application));
+	
     bool quit = false;
 
     while(!quit) {
@@ -50,59 +52,70 @@ int main(void) {
 		}
 		
 		// Vulkan code
-		uint32_t extensionCount = 0;
-		vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, NULL);
+		uint32_t currentExtensionCount = 0;
+		vkEnumerateInstanceExtensionProperties(NULL, &currentExtensionCount, NULL);
 		
-		VkExtensionProperties *extensionProperties = malloc(extensionCount * sizeof(VkExtensionProperties));
-		const char** extensionNames = malloc(extensionCount * sizeof(const char*));
+		VkExtensionProperties *extensionProperties = malloc(currentExtensionCount * sizeof(VkExtensionProperties));
+		const char** extensionNames = malloc((currentExtensionCount + ALLOCATION_OPTIONAL_EXTENSION) * sizeof(const char*));
 		
 		if(extensionProperties != NULL) {
 			
-			vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, extensionProperties);
-			printf("%d extensions have been found of vulkan\n", extensionCount);
+			vkEnumerateInstanceExtensionProperties(NULL, &currentExtensionCount, extensionProperties);
+			printf("%d extensions have been found of vulkan\n", currentExtensionCount);
 			
-			for(uint32_t i = 0; i < extensionCount; i++) {
+			for(uint32_t i = 0; i < currentExtensionCount; i++) {
 				
 				printf("Extension name: %s\n", extensionProperties[i].extensionName);
 				extensionNames[i] = extensionProperties[i].extensionName;
+				
+				/* Allocating for optional extension */
+				extensionNames[i+ALLOCATION_OPTIONAL_EXTENSION] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
 			}
 			
 		}
 		
 		/*
 			Ensure Vk structures at the beginning are initialized with { 0 },
-			because vkCreateInstance is looking for structures, and then garbage
+			because vkCreateInstance is looking for structures with *pNext, and then garbage
 			could be loaded into VkInstance, that may cause SEGMENTATION FAULT.
 		*/
-		VkApplicationInfo appInfo = {0};
+		VkApplicationInfo appInfo = { 0 };
 		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 		appInfo.pApplicationName = "vffish";
 		appInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 1);
 		appInfo.engineVersion = VK_MAKE_VERSION(0, 0, 1);
 		appInfo.apiVersion = VK_API_VERSION_1_3;
 		
-		VkInstanceCreateInfo createInfo = {0};
+		VkInstanceCreateInfo createInfo = { 0 };
 		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 		createInfo.pApplicationInfo = &appInfo;
-		createInfo.enabledExtensionCount = extensionCount;
+		
+		/* MoltenVK may generate VK_ERROR_INCOMPATIBILE_DRIVER, that's why
+		   we want to prevent this error by checking VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR extension */
+		createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+		
+		createInfo.enabledExtensionCount = currentExtensionCount;
 		createInfo.ppEnabledExtensionNames = extensionNames;
 		
-		Application *app = malloc(sizeof(Application));
 		VkResult result;
 		if(app) {
 				check(result = vkCreateInstance(&createInfo, NULL, &app->instance));
 		}
 		
-		/* extensionProperties are no more needed due to instance was created */
+		/* extensionProperties are no more needed due to instance was already created */
 		free(extensionProperties);
 		free(extensionNames);
 		if(app && result == VK_SUCCESS) volkLoadInstance(app->instance);
+
 		
-		// Remember to free *app, *extensionNames;
-		free(app);
 	
     }
 
+	/* Cleanup vulkan resources */
+	if(app) {
+		vkDestroyInstance(app->instance, NULL);
+		free(app);
+	}
     SDL_DestroyWindow(window);
     SDL_Quit();
     

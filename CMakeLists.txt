@@ -16,6 +16,7 @@ find_package(Vulkan REQUIRED)
 file(GLOB VFFISH_MAIN_SRC "src/vffish_main.c")
 file(GLOB VOLK_SRC "external/include/Volk/volk.c")
 file(GLOB VMA_SRC "external/include/VMA/vma_implementation.cpp")
+
 # Silent compile warnings for VMA
 set_source_files_properties(${VMA_SRC} PROPERTIES COMPILE_FLAGS "-w")
 
@@ -40,3 +41,10 @@ add_executable(run_tests
 
 # Make vulkan.h to not collide with volk
 target_compile_definitions(${PROJECT_NAME} PRIVATE VK_NO_PROTOTYPES)
+
+# Custom platform allocation extensions
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+	$<$<PLATFORM_ID:Darwin>:ALLOCATION_OPTIONAL_EXTENSION=1>
+	$<$<PLATFORM_ID:Windows>:ALLOCATION_OPTIONAL_EXTENSION=0>
+	$<$<PLATFORM_ID:Linux>:ALLOCATION_OPTIONAL_EXTENSION=0>
+)
