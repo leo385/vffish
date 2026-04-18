@@ -2,8 +2,8 @@
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_events.h>
 #include <vulkan/vulkan.h>
-#include <volk/volk.h>
-#include <vma/vk_mem_alloc.h>
+#include <Volk/volk.h>
+#include <VMA/vk_mem_alloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -71,7 +71,9 @@ int main(int argv, char** argc) {
 				extensionNames[i] = extensionProperties[i].extensionName;
 				
 				/* Allocating for optional extension */
-				extensionNames[i+ALLOCATION_OPTIONAL_EXTENSION] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+				#ifdef __APPLE__
+					extensionNames[i+ALLOCATION_OPTIONAL_EXTENSION] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+				#endif
 			}
 			
 		}
@@ -94,7 +96,9 @@ int main(int argv, char** argc) {
 		
 		/* MoltenVK may generate VK_ERROR_INCOMPATIBILE_DRIVER, that's why
 		   we want to prevent this error by checking VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR extension */
-		createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+		#ifdef __APPLE__
+			createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+		#endif
 		
 		createInfo.enabledExtensionCount = currentExtensionCount;
 		createInfo.ppEnabledExtensionNames = extensionNames;
