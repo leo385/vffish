@@ -1,6 +1,7 @@
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_events.h>
+#include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.h>
 #include <Volk/volk.h>
 #include <VMA/vk_mem_alloc.h>
@@ -157,6 +158,34 @@ int main(int argv, char** argc) {
 			deviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 			vkGetPhysicalDeviceProperties2(physicalDevices[deviceIndex], &deviceProperties);
 			printf("Selected device: %s\n", deviceProperties.properties.deviceName);
+
+			/* Select queue family for graphics operation due to later rendering something on the screen */
+			uint32_t queueFamilyCount = { 0 };
+			vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevices[deviceIndex], &queueFamilyCount, NULL);
+			VkQueueFamilyProperties2* queueFamilyProperties = malloc(queueFamilyCount * sizeof(VkQueueFamilyProperties2));
+			vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevices[deviceIndex], &queueFamilyCount, queueFamilyProperties);
+			uint32_t queueFamily = { 0 };
+			for(size_t i = 0; i < queueFamilyCount; ++i) {
+				if(queueFamilyProperties[i].queueFamilyProperties.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+					queueFamily = i;
+					break;
+				}
+			}
+
+			if(app){
+				/* Check if queue family for presentation graphics is supported on the device */
+				if(!SDL_Vulkan_GetPresentationSupport(app->instance, physicalDevices[deviceIndex], queueFamily)) {
+					printf("VK_Queue_GRAPHICS_BIT is unsupported on this device");
+					return 1;
+				}
+			}
+
+			const float qfPriorities = 1.0f;
+			VkDeviceQueueCreateInfo queueCreateInfo = { 0 };
+			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+			queueCreateInfo.queueFamilyIndex = queueFamily;
+			queueCreateInfo.queueCount = 1;
+			queueCreateInfo.pQueuePriorities = &qfPriorities;
 		}
 	
     }
