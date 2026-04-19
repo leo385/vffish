@@ -16,9 +16,10 @@ typedef struct Application {
 		VkQueue queue;
 }Application;
 
-bool check(VkResult result) {
+/* Error handling */
+static inline int check(VkResult result) {
 	if(result == VK_ERROR_INITIALIZATION_FAILED) {
-		printf("Failed to initialize vulkan module, code: %d\n", result);
+		printf("Error: Failed to initialize vulkan module, code: %d\n", result);
 		return 1;
 	}
 	else if(result == VK_ERROR_LAYER_NOT_PRESENT) {
