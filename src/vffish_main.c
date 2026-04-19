@@ -12,6 +12,8 @@
 
 typedef struct Application {
 		VkInstance instance;
+		VkDevice device;
+		VkQueue queue;
 }Application;
 
 bool check(VkResult result) {
@@ -186,6 +188,44 @@ int main(int argv, char** argc) {
 			queueCreateInfo.queueFamilyIndex = queueFamily;
 			queueCreateInfo.queueCount = 1;
 			queueCreateInfo.pQueuePriorities = &qfPriorities;
+
+			/* Setup device */
+			const char** deviceExtensions = malloc(sizeof(const char*));
+			deviceExtensions[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+
+			/* Enable extensions from API 1.0 to 1.3 (baseline) */
+			VkPhysicalDeviceFeatures enabledVk10Features = { 0 };
+			enabledVk10Features.samplerAnisotropy = VK_TRUE;
+
+			VkPhysicalDeviceVulkan12Features enabledVk12Features = { 0 };
+			enabledVk12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+			enabledVk12Features.descriptorIndexing = true;
+			enabledVk12Features.shaderSampledImageArrayNonUniformIndexing = true;
+			enabledVk12Features.descriptorBindingVariableDescriptorCount = true;
+			enabledVk12Features.runtimeDescriptorArray = true;
+			enabledVk12Features.bufferDeviceAddress = true;
+
+			VkPhysicalDeviceVulkan13Features enabledVk13Features = { 0 };
+			enabledVk13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+			enabledVk13Features.pNext = &enabledVk12Features;
+			enabledVk13Features.synchronization2 = true;
+			enabledVk13Features.dynamicRendering = true;
+
+			/* Create logical device with all artifacts */
+			VkDeviceCreateInfo deviceCreateInfo = { 0 };
+			deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+			deviceCreateInfo.pNext = &enabledVk13Features;
+			deviceCreateInfo.queueCreateInfoCount = 1;
+			deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
+			deviceCreateInfo.enabledExtensionCount = 1;
+			deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
+			deviceCreateInfo.pEnabledFeatures = &enabledVk10Features;
+
+			if(app) {
+				check(vkCreateDevice(physicalDevices[deviceIndex], &deviceCreateInfo, NULL, &app->device));
+				/* Query a device for a queue to submit graphics commands into */
+				vkGetDeviceQueue(app->device, queueFamily, 0, &app->queue);
+			}
 		}
 	
     }
