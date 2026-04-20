@@ -2,7 +2,6 @@
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan.h>
 #include <Volk/volk.h>
 #include <VMA/vk_mem_alloc.h>
 #include <stdio.h>
@@ -14,6 +13,7 @@ typedef struct Application {
 		VkInstance instance;
 		VkDevice device;
 		VkQueue queue;
+		VmaAllocator allocator;
 }Application;
 
 /* Error handling */
@@ -56,6 +56,10 @@ int main(int argv, char** argc) {
 		if(volkInitialize() != VK_SUCCESS) {
 			return 1;
 		}
+
+		if(!app) {
+			return 1;
+		}
 		
 		// Vulkan code
 		uint32_t currentExtensionCount = 0;
@@ -87,52 +91,54 @@ int main(int argv, char** argc) {
 			because vkCreateInstance is looking for structures with *pNext, and then garbage
 			could be loaded into VkInstance, that may cause SEGMENTATION FAULT.
 		*/
-		VkApplicationInfo appInfo = { 0 };
-		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-		appInfo.pApplicationName = "vffish";
-		appInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 1);
-		appInfo.engineVersion = VK_MAKE_VERSION(0, 0, 1);
-		appInfo.apiVersion = VK_API_VERSION_1_3;
+		VkApplicationInfo appInfo = {
+			.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+			.pApplicationName = "vffish",
+			.applicationVersion = VK_MAKE_VERSION(0, 0, 1),
+			.engineVersion = VK_MAKE_VERSION(0, 0, 1),
+			.apiVersion = VK_API_VERSION_1_3
+		};
 		
-		VkInstanceCreateInfo createInfo = { 0 };
-		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-		createInfo.pApplicationInfo = &appInfo;
-		
+		VkInstanceCreateInfo createInfo = {
+			.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+			.pApplicationInfo = &appInfo,
+			.enabledExtensionCount = currentExtensionCount,
+			.ppEnabledExtensionNames = extensionNames
+		};
+
 		/* MoltenVK may generate VK_ERROR_INCOMPATIBILE_DRIVER, that's why
-		   we want to prevent this error by checking VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR extension */
+		   we want to prevent this error by checking VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR extension 
+		*/
 		#ifdef __APPLE__
 			createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 		#endif
 		
-		createInfo.enabledExtensionCount = currentExtensionCount;
-		createInfo.ppEnabledExtensionNames = extensionNames;
-		
 		VkResult result;
-		if(app) {
-			check(result = vkCreateInstance(&createInfo, NULL, &app->instance));
-		}
+		check(result = vkCreateInstance(&createInfo, NULL, &app->instance));
 		
 		/* extensionProperties are no more needed due to instance was already created */
 		free(extensionProperties);
 		free(extensionNames);
-		if(app && result == VK_SUCCESS) volkLoadInstance(app->instance);
+		if(result == VK_SUCCESS) volkLoadInstance(app->instance);
 
 		/* Count devices needed for rendering */
 		uint32_t currentDevicesCount = 0;
-		VkPhysicalDevice* physicalDevices = NULL;
 		
-		if(app) {
-			check(result = vkEnumeratePhysicalDevices(app->instance, &currentDevicesCount, NULL));
-			
-			if(currentDevicesCount == 0) {
-				printf("There are not available devices for rendering");
-				return 1;
-			}
-			
-			printf("Available devices: %d\n", currentDevicesCount);
-			physicalDevices = malloc(currentDevicesCount * sizeof(VkPhysicalDevice));
-			check(result = vkEnumeratePhysicalDevices(app->instance, &currentDevicesCount, physicalDevices));
+		check(result = vkEnumeratePhysicalDevices(app->instance, &currentDevicesCount, NULL));
+		
+		if(currentDevicesCount == 0) {
+			printf("There are not available devices for rendering");
+			return 1;
 		}
+		
+		printf("Available devices: %d\n", currentDevicesCount);
+		VkPhysicalDevice* physicalDevices = malloc(currentDevicesCount * sizeof(VkPhysicalDevice));
+		
+		if(!physicalDevices) {
+			return 1;
+		}
+
+		check(result = vkEnumeratePhysicalDevices(app->instance, &currentDevicesCount, physicalDevices));
 		
 		/* Provide device index to the console */
 		uint32_t deviceIndex = { 0 };
@@ -156,78 +162,96 @@ int main(int argv, char** argc) {
 		}
 		
 		/* Display device information with choosen index */
-		if(physicalDevices) {
-			VkPhysicalDeviceProperties2 deviceProperties = { 0 };
-			deviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-			vkGetPhysicalDeviceProperties2(physicalDevices[deviceIndex], &deviceProperties);
-			printf("Selected device: %s\n", deviceProperties.properties.deviceName);
+		VkPhysicalDeviceProperties2 deviceProperties = { 0 };
+		deviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+		vkGetPhysicalDeviceProperties2(physicalDevices[deviceIndex], &deviceProperties);
+		printf("Selected device: %s\n", deviceProperties.properties.deviceName);
 
-			/* Select queue family for graphics operation due to later rendering something on the screen */
-			uint32_t queueFamilyCount = { 0 };
-			vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevices[deviceIndex], &queueFamilyCount, NULL);
-			VkQueueFamilyProperties2* queueFamilyProperties = malloc(queueFamilyCount * sizeof(VkQueueFamilyProperties2));
-			vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevices[deviceIndex], &queueFamilyCount, queueFamilyProperties);
-			uint32_t queueFamily = { 0 };
-			for(size_t i = 0; i < queueFamilyCount; ++i) {
-				if(queueFamilyProperties[i].queueFamilyProperties.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-					queueFamily = i;
-					break;
-				}
-			}
-
-			if(app){
-				/* Check if queue family for presentation graphics is supported on the device */
-				if(!SDL_Vulkan_GetPresentationSupport(app->instance, physicalDevices[deviceIndex], queueFamily)) {
-					printf("VK_Queue_GRAPHICS_BIT is unsupported on this device");
-					return 1;
-				}
-			}
-
-			const float qfPriorities = 1.0f;
-			VkDeviceQueueCreateInfo queueCreateInfo = { 0 };
-			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-			queueCreateInfo.queueFamilyIndex = queueFamily;
-			queueCreateInfo.queueCount = 1;
-			queueCreateInfo.pQueuePriorities = &qfPriorities;
-
-			/* Setup device */
-			const char** deviceExtensions = malloc(sizeof(const char*));
-			deviceExtensions[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
-
-			/* Enable extensions from API 1.0 to 1.3 (baseline) */
-			VkPhysicalDeviceFeatures enabledVk10Features = { 0 };
-			enabledVk10Features.samplerAnisotropy = VK_TRUE;
-
-			VkPhysicalDeviceVulkan12Features enabledVk12Features = { 0 };
-			enabledVk12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-			enabledVk12Features.descriptorIndexing = true;
-			enabledVk12Features.shaderSampledImageArrayNonUniformIndexing = true;
-			enabledVk12Features.descriptorBindingVariableDescriptorCount = true;
-			enabledVk12Features.runtimeDescriptorArray = true;
-			enabledVk12Features.bufferDeviceAddress = true;
-
-			VkPhysicalDeviceVulkan13Features enabledVk13Features = { 0 };
-			enabledVk13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-			enabledVk13Features.pNext = &enabledVk12Features;
-			enabledVk13Features.synchronization2 = true;
-			enabledVk13Features.dynamicRendering = true;
-
-			/* Create logical device with all artifacts */
-			VkDeviceCreateInfo deviceCreateInfo = { 0 };
-			deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-			deviceCreateInfo.pNext = &enabledVk13Features;
-			deviceCreateInfo.queueCreateInfoCount = 1;
-			deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-			deviceCreateInfo.enabledExtensionCount = 1;
-			deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
-			deviceCreateInfo.pEnabledFeatures = &enabledVk10Features;
-
-			if(app) {
-				check(vkCreateDevice(physicalDevices[deviceIndex], &deviceCreateInfo, NULL, &app->device));
-				/* Query a device for a queue to submit graphics commands into */
-				vkGetDeviceQueue(app->device, queueFamily, 0, &app->queue);
+		/* Select queue family for graphics operation due to later rendering something on the screen */
+		uint32_t queueFamilyCount = { 0 };
+		vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevices[deviceIndex], &queueFamilyCount, NULL);
+		VkQueueFamilyProperties2* queueFamilyProperties = malloc(queueFamilyCount * sizeof(VkQueueFamilyProperties2));
+		vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevices[deviceIndex], &queueFamilyCount, queueFamilyProperties);
+		uint32_t queueFamily = { 0 };
+		for(size_t i = 0; i < queueFamilyCount; ++i) {
+			if(queueFamilyProperties[i].queueFamilyProperties.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+				queueFamily = i;
+				break;
 			}
 		}
+
+		/* Check if queue family for presentation graphics is supported on the device */
+		if(!SDL_Vulkan_GetPresentationSupport(app->instance, physicalDevices[deviceIndex], queueFamily)) {
+			printf("VK_Queue_GRAPHICS_BIT is unsupported on this device");
+			return 1;
+		}
+
+		const float qfPriorities = 1.0f;
+		VkDeviceQueueCreateInfo queueCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+			.queueFamilyIndex = queueFamily,
+			.queueCount = 1,
+			.pQueuePriorities = &qfPriorities
+		};
+
+		/* Setup device */
+		const char** deviceExtensions = malloc(sizeof(const char*));
+		deviceExtensions[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+
+		/* Enable extensions from API 1.0 to 1.3 (baseline) */
+		VkPhysicalDeviceFeatures enabledVk10Features = {
+			.samplerAnisotropy = VK_TRUE
+		};
+
+		VkPhysicalDeviceVulkan12Features enabledVk12Features = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+			.descriptorIndexing = true,
+			.shaderSampledImageArrayNonUniformIndexing = true,
+			.descriptorBindingVariableDescriptorCount = true,
+			.runtimeDescriptorArray = true,
+			.bufferDeviceAddress = true
+		};
+
+		VkPhysicalDeviceVulkan13Features enabledVk13Features = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+			.pNext = &enabledVk12Features,
+			.synchronization2 = true,
+			.dynamicRendering = true
+		};
+
+		/* Create logical device with all artifacts */
+		VkDeviceCreateInfo deviceCreateInfo = { 
+			.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+			.pNext = &enabledVk13Features,
+			.queueCreateInfoCount = 1,
+			.pQueueCreateInfos = &queueCreateInfo,
+			.enabledExtensionCount = 1,
+			.ppEnabledExtensionNames = deviceExtensions,
+			.pEnabledFeatures = &enabledVk10Features
+		};
+
+		check(vkCreateDevice(physicalDevices[deviceIndex], &deviceCreateInfo, NULL, &app->device));
+		/* Query a device for a queue to submit graphics commands into */
+		vkGetDeviceQueue(app->device, queueFamily, 0, &app->queue);
+		
+		/* VMA Settings */
+		VmaVulkanFunctions vkFunctions = {
+			.vkGetInstanceProcAddr = vkGetInstanceProcAddr,
+			.vkGetDeviceProcAddr = vkGetDeviceProcAddr,
+			.vkCreateImage = vkCreateImage
+		};
+
+		VmaAllocatorCreateInfo allocatorCreateInfo = {
+			.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+			.physicalDevice = physicalDevices[deviceIndex],
+			.device = app->device,
+			.pVulkanFunctions = &vkFunctions,
+			.instance = app->instance
+		};
+
+		check(vmaCreateAllocator(&allocatorCreateInfo, &app->allocator));
+
+		/* Remember to free *physicalDevices, *queueFamilyProperties, **deviceExtensions, */
 	
     }
 
