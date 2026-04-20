@@ -4,6 +4,7 @@
 #include <SDL3/SDL_vulkan.h>
 #include <Volk/volk.h>
 #include <VMA/vk_mem_alloc.h>
+#include <cglm/cglm.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -286,6 +287,7 @@ int main(int argv, char** argc) {
 
 	/* Cleanup vulkan resources */
 	if(app) {
+		vkDestroyDevice(app->device, NULL);
 		vkDestroyInstance(app->instance, NULL);
 		free(app);
 	}

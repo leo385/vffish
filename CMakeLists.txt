@@ -13,15 +13,20 @@ set(EXTERNAL_H "external/include/")
 
 include_directories(include ${EXTERNAL_H})
 
-# Find SDL3 on Windows, Linux.
+# Find SDL3 + cglm on Windows, Linux.
 if(!APPLE)
 	find_package(PkgConfig REQUIRED)
 	pkg_check_modules(SDL3 REQUIRED sdl3)
+	find_package(cglm REQUIRED)
 endif()
 
-# Find SDL3 on APPLE
+# Find SDL3 + cglm on APPLE
 if(APPLE)
 	find_package(SDL3 REQUIRED)
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(CGLM REQUIRED cglm)
+	link_directories(${CGLM_LIBRARY_DIRS})
+	include_directories(${CGLM_INCLUDE_DIRS})
 endif()
 
 find_package(Vulkan REQUIRED)
@@ -36,6 +41,7 @@ set_source_files_properties(${VMA_SRC} PROPERTIES COMPILE_FLAGS "-w")
 add_executable(${PROJECT_NAME} ${VFFISH_MAIN_SRC} ${VOLK_SRC} ${VMA_SRC})
 target_link_libraries(${PROJECT_NAME} PRIVATE
 	${SDL3_LIBRARIES}
+	${CGLM_LIBRARIES}
 	${CMAKE_DL_LIBS}
 )
 
