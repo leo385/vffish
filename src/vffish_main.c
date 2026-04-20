@@ -10,6 +10,11 @@
 #include <errno.h>
 #include <limits.h>
 
+typedef struct Window {
+	SDL_Window *window;
+	ivec2 size;
+}Window;
+
 typedef struct Application {
 		VkInstance instance;
 		VkDevice device;
@@ -67,8 +72,8 @@ int main(int argv, char** argc) {
 			return 1;
 	}
 
-	Application *app = malloc(sizeof(Application));
-	if(!app) {
+	Application *sApp = malloc(sizeof(Application));
+	if(!sApp) {
 		return 1;
 	}
 	
@@ -125,17 +130,17 @@ int main(int argv, char** argc) {
 	#endif
 	
 	VkResult result;
-	check(result = vkCreateInstance(&createInfo, NULL, &app->instance));
+	check(result = vkCreateInstance(&createInfo, NULL, &sApp->instance));
 	
 	/* extensionProperties are no more needed due to instance was already created */
 	free(extensionProperties);
 	free(extensionNames);
-	if(result == VK_SUCCESS) volkLoadInstance(app->instance);
+	if(result == VK_SUCCESS) volkLoadInstance(sApp->instance);
 
 	/* Count devices needed for rendering */
 	uint32_t currentDevicesCount = 0;
 	
-	check(result = vkEnumeratePhysicalDevices(app->instance, &currentDevicesCount, NULL));
+	check(result = vkEnumeratePhysicalDevices(sApp->instance, &currentDevicesCount, NULL));
 	
 	if(currentDevicesCount == 0) {
 		printf("There are not available devices for rendering");
@@ -149,7 +154,7 @@ int main(int argv, char** argc) {
 		return 1;
 	}
 
-	check(result = vkEnumeratePhysicalDevices(app->instance, &currentDevicesCount, physicalDevices));
+	check(result = vkEnumeratePhysicalDevices(sApp->instance, &currentDevicesCount, physicalDevices));
 	
 	/* Provide device index to the console */
 	uint32_t deviceIndex = { 0 };
@@ -192,7 +197,7 @@ int main(int argv, char** argc) {
 	}
 
 	/* Check if queue family for presentation graphics is supported on the device */
-	if(!SDL_Vulkan_GetPresentationSupport(app->instance, physicalDevices[deviceIndex], queueFamily)) {
+	if(!SDL_Vulkan_GetPresentationSupport(sApp->instance, physicalDevices[deviceIndex], queueFamily)) {
 		printf("VK_Queue_GRAPHICS_BIT is unsupported on this device");
 		return 1;
 	}
@@ -241,9 +246,9 @@ int main(int argv, char** argc) {
 		.pEnabledFeatures = &enabledVk10Features
 	};
 
-	check(vkCreateDevice(physicalDevices[deviceIndex], &deviceCreateInfo, NULL, &app->device));
+	check(vkCreateDevice(physicalDevices[deviceIndex], &deviceCreateInfo, NULL, &sApp->device));
 	/* Query a device for a queue to submit graphics commands into */
-	vkGetDeviceQueue(app->device, queueFamily, 0, &app->queue);
+	vkGetDeviceQueue(sApp->device, queueFamily, 0, &sApp->queue);
 	
 	/* VMA Settings */
 	VmaVulkanFunctions vkFunctions = {
@@ -255,23 +260,48 @@ int main(int argv, char** argc) {
 	VmaAllocatorCreateInfo allocatorCreateInfo = {
 		.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
 		.physicalDevice = physicalDevices[deviceIndex],
-		.device = app->device,
+		.device = sApp->device,
 		.pVulkanFunctions = &vkFunctions,
-		.instance = app->instance
+		.instance = sApp->instance
 	};
 
-	check(vmaCreateAllocator(&allocatorCreateInfo, &app->allocator));
+	check(vmaCreateAllocator(&allocatorCreateInfo, &sApp->allocator));
 
 	/* Window and surface */
-    SDL_Window *window = SDL_CreateWindow("vffish", 1280u, 720u, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-	if(!SDL_Vulkan_CreateSurface(window, app->instance, NULL, &app->surface)){
+	Window *sWindow = malloc(sizeof(Window));
+	if(!sWindow) {
+		return 1;
+	}
+
+    sWindow->window = SDL_CreateWindow("vffish", 1280u, 720u, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+	if(!sWindow->window) {
+		printf("Failed to create a window: %s\n", SDL_GetError());
+		return 1;
+	}
+
+	if(!SDL_GetWindowSize(sWindow->window, &sWindow->size[0], &sWindow->size[1])) {
+		printf("Failed to get window size: %s\n", SDL_GetError());
+		return 1;
+	}
+
+	if(!SDL_Vulkan_CreateSurface(sWindow->window, sApp->instance, NULL, &sApp->surface)){
 		printf("Failed to create vulkan surface.\n");
 		return 1;
 	}
 
 	/* Store surface capabilities for reference in future */
-	check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevices[deviceIndex], app->surface, &app->surfaceCapabilities));
-	
+	check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevices[deviceIndex], sApp->surface, &sApp->surfaceCapabilities));
+
+	VkExtent2D swapchainExtent = { 
+		.width = sApp->surfaceCapabilities.currentExtent.width,
+		.height = sApp->surfaceCapabilities.currentExtent.height 
+	};
+
+	/* On Wayland, surface capabilities hold width as 0xFFFFFFFF value */
+	if(sApp->surfaceCapabilities.currentExtent.width == 0xFFFFFFFF) {
+		swapchainExtent.width = (uint32_t)sWindow->size[0];
+		swapchainExtent.height = (uint32_t)sWindow->size[1];
+	}
 	
     bool quit = false;
     while(!quit) {
@@ -286,12 +316,16 @@ int main(int argv, char** argc) {
 	/* Remember to free *physicalDevices, *queueFamilyProperties, **deviceExtensions, */
 
 	/* Cleanup vulkan resources */
-	if(app) {
-		vkDestroyDevice(app->device, NULL);
-		vkDestroyInstance(app->instance, NULL);
-		free(app);
+	if(sApp) {
+		vkDestroyDevice(sApp->device, NULL);
+		vkDestroyInstance(sApp->instance, NULL);
+		free(sApp);
 	}
-    SDL_DestroyWindow(window);
+	if(sWindow) {
+    	SDL_DestroyWindow(sWindow->window);
+		free(sWindow);
+	}
+
     SDL_Quit();
     
     return 0;
