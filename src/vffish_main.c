@@ -22,6 +22,9 @@ typedef struct Application {
 		VmaAllocator allocator;
 		VkSurfaceKHR surface;
 		VkSurfaceCapabilitiesKHR surfaceCapabilities;
+		VkSwapchainKHR swapchain;
+		VkImage* swapchainImages;
+		VkImageView* swapchainImageViews;
 }Application;
 
 /* Error handling */
@@ -302,6 +305,39 @@ int main(int argv, char** argc) {
 		swapchainExtent.width = (uint32_t)sWindow->size[0];
 		swapchainExtent.height = (uint32_t)sWindow->size[1];
 	}
+
+	const VkFormat imageFormat = { VK_FORMAT_B8G8R8A8_SRGB };
+	VkSwapchainCreateInfoKHR swapchainCreateInfo = {
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = sApp->surface,
+		.minImageCount = sApp->surfaceCapabilities.minImageCount,
+		.imageFormat = imageFormat,
+		.imageColorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR,
+		.imageExtent = { .width = swapchainExtent.width, .height = swapchainExtent.height },
+		.imageArrayLayers = 1,
+		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+		.presentMode = VK_PRESENT_MODE_FIFO_KHR
+	};
+	check(vkCreateSwapchainKHR(sApp->device, &swapchainCreateInfo, NULL, &sApp->swapchain));
+
+	/* Get swapchain images */
+	uint32_t imagesCount = { 0 };
+	check(vkGetSwapchainImagesKHR(sApp->device, sApp->swapchain, &imagesCount, NULL));
+	sApp->swapchainImages = malloc(imagesCount * sizeof(VkImage));
+	check(vkGetSwapchainImagesKHR(sApp->device, sApp->swapchain, &imagesCount, sApp->swapchainImages));
+	sApp->swapchainImageViews = malloc(imagesCount * sizeof(VkImageView));
+	for(size_t i = 0; i < imagesCount; ++i) {
+		VkImageViewCreateInfo viewCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = sApp->swapchainImages[i],
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = imageFormat,
+			.subresourceRange = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 }
+		};
+		check(vkCreateImageView(sApp->device, &viewCreateInfo, NULL, &sApp->swapchainImageViews[i]));
+	}
 	
     bool quit = false;
     while(!quit) {
@@ -313,10 +349,10 @@ int main(int argv, char** argc) {
         }
     }
 
-	/* Remember to free *physicalDevices, *queueFamilyProperties, **deviceExtensions, */
+	/* Remember to free *swapchainImages, *swapchainImageViews *physicalDevices, *queueFamilyProperties, **deviceExtensions, */
 
 	/* Cleanup vulkan resources */
-	if(sApp) {
+	if(sApp) {		
 		vkDestroyDevice(sApp->device, NULL);
 		vkDestroyInstance(sApp->instance, NULL);
 		free(sApp);
