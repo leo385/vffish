@@ -349,10 +349,43 @@ int main(int argv, char** argc) {
         }
     }
 
-	/* Remember to free *swapchainImages, *swapchainImageViews *physicalDevices, *queueFamilyProperties, **deviceExtensions, */
-
 	/* Cleanup vulkan resources */
-	if(sApp) {		
+	if(sApp) {
+		if(sApp->allocator){
+			vmaDestroyAllocator(sApp->allocator);
+		}
+
+		if(sApp->swapchainImageViews){
+			for(size_t i = 0; i < imagesCount; ++i) {
+				vkDestroyImageView(sApp->device, sApp->swapchainImageViews[i], NULL);
+			}
+		}
+
+		if(sApp->swapchain) {
+			vkDestroySwapchainKHR(sApp->device, sApp->swapchain, NULL);
+		}
+
+		if(sApp->swapchainImages && sApp->swapchainImageViews){
+			free(sApp->swapchainImageViews);
+			free(sApp->swapchainImages);
+		}
+
+		if(physicalDevices){
+			free(physicalDevices);
+		}
+
+		if(queueFamilyProperties){
+			free(queueFamilyProperties);
+		}
+
+		if(deviceExtensions){
+			free(deviceExtensions);
+		}
+
+		if(sApp->surface) {
+			SDL_Vulkan_DestroySurface(sApp->instance, sApp->surface, NULL);
+		}
+
 		vkDestroyDevice(sApp->device, NULL);
 		vkDestroyInstance(sApp->instance, NULL);
 		free(sApp);

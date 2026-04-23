@@ -5,3 +5,4 @@ CMakeCache.txt
 external/.DS_Store
 external/include/SDL3/
 build/
+debug.entitlements
