@@ -3,7 +3,10 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_vulkan.h>
 #include <Volk/volk.h>
+#define VMA_DEBUG_INITIALIZE_ALLOCATIONS 1
+#define VMA_ASSERT(expr) assert(expr)
 #include <VMA/vk_mem_alloc.h>
+#include <vulkan/vulkan_beta.h>
 #include <cglm/cglm.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +27,13 @@ typedef struct Application {
 		VkSurfaceCapabilitiesKHR surfaceCapabilities;
 		VkSwapchainKHR swapchain;
 		VkImage* swapchainImages;
+		VkImage depthImage;
+		VkImageView depthImageView;
 		VkImageView* swapchainImageViews;
+		VkFormat* depthFormatList;
+
+		/* VMA allocation for depth image */
+		VmaAllocation depthImageAllocation;
 }Application;
 
 /* Error handling */
@@ -67,17 +76,22 @@ static inline int check(VkResult result) {
 
 int main(int argv, char** argc) {
 
+	uint8_t exit_code = 0;
+
     if(!SDL_Init(SDL_INIT_VIDEO)) {
-        return 1;
+		exit_code = 1;
+		goto cleanup;
     }
 
 	if(volkInitialize() != VK_SUCCESS) {
-			return 1;
+		exit_code = 1;
+		goto cleanup;
 	}
 
 	Application *sApp = malloc(sizeof(Application));
 	if(!sApp) {
-		return 1;
+		exit_code = 1;
+		goto cleanup;
 	}
 	
 	// Vulkan code
@@ -103,6 +117,10 @@ int main(int argv, char** argc) {
 			#endif
 		}
 		
+	}
+	else{
+		exit_code = 1;
+		goto cleanup;
 	}
 	
 	/*
@@ -147,14 +165,16 @@ int main(int argv, char** argc) {
 	
 	if(currentDevicesCount == 0) {
 		printf("There are not available devices for rendering");
-		return 1;
+		exit_code = 1;
+		goto cleanup;
 	}
 	
 	printf("Available devices: %d\n", currentDevicesCount);
 	VkPhysicalDevice* physicalDevices = malloc(currentDevicesCount * sizeof(VkPhysicalDevice));
 	
 	if(!physicalDevices) {
-		return 1;
+		exit_code = 1;
+		goto cleanup;
 	}
 
 	check(result = vkEnumeratePhysicalDevices(sApp->instance, &currentDevicesCount, physicalDevices));
@@ -169,12 +189,14 @@ int main(int argv, char** argc) {
 		unsigned long index = strtoul(cDeviceIndex, &endptr, 10);
 		if((uint32_t)index >= currentDevicesCount) {
 			printf("This device index doesn't exist\n");
-			return 1;
+			exit_code = 1;
+			goto cleanup;
 		}
 		
 		if(errno == ERANGE || (uint32_t)index > UINT_MAX) {
 			perror("This index is too big\n");
-			return 1;
+			exit_code = 1;
+			goto cleanup;
 		}
 		
 		deviceIndex = (uint32_t)index;
@@ -188,7 +210,10 @@ int main(int argv, char** argc) {
 
 	/* Select queue family for graphics operation due to later rendering something on the screen */
 	uint32_t queueFamilyCount = { 0 };
-	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevices[deviceIndex], &queueFamilyCount, NULL);
+	VkQueueFamilyProperties2 queueFamilyProperties2 = { 0 };
+	queueFamilyProperties2.sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+
+	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevices[deviceIndex], &queueFamilyCount, &queueFamilyProperties2);
 	VkQueueFamilyProperties2* queueFamilyProperties = malloc(queueFamilyCount * sizeof(VkQueueFamilyProperties2));
 	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevices[deviceIndex], &queueFamilyCount, queueFamilyProperties);
 	uint32_t queueFamily = { 0 };
@@ -202,20 +227,22 @@ int main(int argv, char** argc) {
 	/* Check if queue family for presentation graphics is supported on the device */
 	if(!SDL_Vulkan_GetPresentationSupport(sApp->instance, physicalDevices[deviceIndex], queueFamily)) {
 		printf("VK_Queue_GRAPHICS_BIT is unsupported on this device");
-		return 1;
+		exit_code = 1;
+		goto cleanup;
 	}
 
 	const float qfPriorities = 1.0f;
 	VkDeviceQueueCreateInfo queueCreateInfo = {
-		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 		.queueFamilyIndex = queueFamily,
 		.queueCount = 1,
 		.pQueuePriorities = &qfPriorities
 	};
 
 	/* Setup device */
-	const char** deviceExtensions = malloc(sizeof(const char*));
+	const char** deviceExtensions = malloc(2 * sizeof(const char*));
 	deviceExtensions[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+	deviceExtensions[1] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
 
 	/* Enable extensions from API 1.0 to 1.3 (baseline) */
 	VkPhysicalDeviceFeatures enabledVk10Features = {
@@ -244,7 +271,7 @@ int main(int argv, char** argc) {
 		.pNext = &enabledVk13Features,
 		.queueCreateInfoCount = 1,
 		.pQueueCreateInfos = &queueCreateInfo,
-		.enabledExtensionCount = 1,
+		.enabledExtensionCount = 2,
 		.ppEnabledExtensionNames = deviceExtensions,
 		.pEnabledFeatures = &enabledVk10Features
 	};
@@ -273,23 +300,29 @@ int main(int argv, char** argc) {
 	/* Window and surface */
 	Window *sWindow = malloc(sizeof(Window));
 	if(!sWindow) {
-		return 1;
+		exit_code = 1;
+		goto cleanup;
 	}
 
     sWindow->window = SDL_CreateWindow("vffish", 1280u, 720u, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 	if(!sWindow->window) {
 		printf("Failed to create a window: %s\n", SDL_GetError());
-		return 1;
+		exit_code = 1;
+		goto cleanup;
 	}
 
 	if(!SDL_GetWindowSize(sWindow->window, &sWindow->size[0], &sWindow->size[1])) {
 		printf("Failed to get window size: %s\n", SDL_GetError());
-		return 1;
+		exit_code = 1;
+		goto cleanup;
 	}
+	const uint32_t windowSizeX = sWindow->size[0];
+	const uint32_t windowSizeY = sWindow->size[1];
 
 	if(!SDL_Vulkan_CreateSurface(sWindow->window, sApp->instance, NULL, &sApp->surface)){
 		printf("Failed to create vulkan surface.\n");
-		return 1;
+		exit_code = 1;
+		goto cleanup;
 	}
 
 	/* Store surface capabilities for reference in future */
@@ -302,8 +335,8 @@ int main(int argv, char** argc) {
 
 	/* On Wayland, surface capabilities hold width as 0xFFFFFFFF value */
 	if(sApp->surfaceCapabilities.currentExtent.width == 0xFFFFFFFF) {
-		swapchainExtent.width = (uint32_t)sWindow->size[0];
-		swapchainExtent.height = (uint32_t)sWindow->size[1];
+		swapchainExtent.width = windowSizeX;
+		swapchainExtent.height = windowSizeY;
 	}
 
 	const VkFormat imageFormat = { VK_FORMAT_B8G8R8A8_SRGB };
@@ -338,7 +371,51 @@ int main(int argv, char** argc) {
 		};
 		check(vkCreateImageView(sApp->device, &viewCreateInfo, NULL, &sApp->swapchainImageViews[i]));
 	}
+
+	/* Depth attachment */
+	const size_t depthFormatSizeList = 2;
+	sApp->depthFormatList = malloc(depthFormatSizeList * sizeof(VkFormat));
+	sApp->depthFormatList[0] = VK_FORMAT_D32_SFLOAT_S8_UINT;
+	sApp->depthFormatList[1] = VK_FORMAT_D24_UNORM_S8_UINT;
+	VkFormat depthFormat = { VK_FORMAT_UNDEFINED };
+
+	for(size_t i = 0; i < depthFormatSizeList; ++i) {
+		VkFormatProperties2 formatProperties = { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
+		vkGetPhysicalDeviceFormatProperties2(physicalDevices[deviceIndex], sApp->depthFormatList[i], &formatProperties);
+		if(formatProperties.formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+			depthFormat = sApp->depthFormatList[i];
+			break;
+		}
+	}
+
+	VkImageCreateInfo depthImageCreateInfo = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = depthFormat,
+		.extent = { .width = windowSizeX, .height = windowSizeY, .depth = 1 },
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+	};
+
+	VmaAllocationCreateInfo allocCI = {
+		.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+		.usage = VMA_MEMORY_USAGE_AUTO
+	};
+	check(vmaCreateImage(sApp->allocator, &depthImageCreateInfo, &allocCI, &sApp->depthImage, &sApp->depthImageAllocation, NULL));
 	
+	VkImageViewCreateInfo depthImageViewCreateInfo = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = sApp->depthImage,
+		.viewType = VK_IMAGE_VIEW_TYPE_2D,
+		.format = depthFormat,
+		.subresourceRange = { .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, .levelCount = 1, .layerCount = 1 }
+	};
+	check(vkCreateImageView(sApp->device, &depthImageViewCreateInfo, NULL, &sApp->depthImageView));
+
     bool quit = false;
     while(!quit) {
         for(SDL_Event event; SDL_PollEvent(&event);) {
@@ -349,9 +426,22 @@ int main(int argv, char** argc) {
         }
     }
 
+	cleanup:
 	/* Cleanup vulkan resources */
 	if(sApp) {
-		if(sApp->allocator){
+		if(sApp->depthFormatList) {
+			free(sApp->depthFormatList);
+		}
+
+		if(sApp->depthImageView) {
+			vkDestroyImageView(sApp->device, sApp->depthImageView, NULL);
+		}
+
+		if(sApp->depthImage) {
+			vmaDestroyImage(sApp->allocator, sApp->depthImage, sApp->depthImageAllocation);
+		}
+
+		if(sApp->allocator) {
 			vmaDestroyAllocator(sApp->allocator);
 		}
 
@@ -365,10 +455,8 @@ int main(int argv, char** argc) {
 			vkDestroySwapchainKHR(sApp->device, sApp->swapchain, NULL);
 		}
 
-		if(sApp->swapchainImages && sApp->swapchainImageViews){
-			free(sApp->swapchainImageViews);
-			free(sApp->swapchainImages);
-		}
+		free(sApp->swapchainImageViews);
+		free(sApp->swapchainImages);
 
 		if(physicalDevices){
 			free(physicalDevices);
@@ -389,6 +477,8 @@ int main(int argv, char** argc) {
 		vkDestroyDevice(sApp->device, NULL);
 		vkDestroyInstance(sApp->instance, NULL);
 		free(sApp);
+
+		return exit_code;
 	}
 	if(sWindow) {
     	SDL_DestroyWindow(sWindow->window);
@@ -397,5 +487,5 @@ int main(int argv, char** argc) {
 
     SDL_Quit();
     
-    return 0;
+    return exit_code;
 }
